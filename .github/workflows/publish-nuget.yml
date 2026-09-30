@@ -1,0 +1,70 @@
+name: Publish NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Test
+        run: dotnet test McpApplicationInsights.slnx -c Release
+
+      - name: Pack
+        run: dotnet pack src/McpApplicationInsights/McpApplicationInsights.csproj -c Release -o nupkg
+
+      - name: NuGet login (Trusted Publisher)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: matneves
+
+      - name: Publish to NuGet.org
+        run: |
+          package=$(find nupkg -name '*.nupkg' | head -n 1)
+          if [ -z "$package" ]; then
+            echo "Nenhum .nupkg encontrado em nupkg"
+            exit 1
+          fi
+          echo "Publicando $package..."
+          dotnet nuget push "$package" \
+            --api-key ${{ steps.login.outputs.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          version="${tag#v}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag já existe, pulando criação."
+            exit 0
+          fi
+          notes=$(cat <<EOF
+          ## McpApplicationInsights $version
+
+          Pacote publicado no [NuGet](https://www.nuget.org/packages/McpApplicationInsights/$version).
+
+          ### Instalação
+
+          \`\`\`powershell
+          dotnet tool install --global McpApplicationInsights --version $version
+          \`\`\`
+
+          Veja o [README](https://github.com/${{ github.repository }}/blob/$tag/README.md) para configuração MCP.
+          EOF
+          )
+          gh release create "$tag" --title "McpApplicationInsights $version" --notes "$notes"
